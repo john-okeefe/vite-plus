@@ -57,7 +57,7 @@ import {
   workspaceUsesVitestDirectly,
   workspaceUsesWebdriverio,
   workspaceUsesWebdriverioProvider,
-  warnEsbuildConfigInViteConfig,
+  migrateEsbuildConfigInViteConfig,
   wrapLazyPluginsInViteConfig,
 } from '../migrator.ts';
 import { type MigrationReport } from '../report.ts';
@@ -346,7 +346,7 @@ export function rewriteStandaloneProject(
   dropDeadOxlintPluginsDependency(projectPath, workspaceInfo.packages, originalOxlintDependencies);
   wrapLazyPluginsInViteConfig(projectPath, silent, report);
   migrateTaskCacheConfigInViteConfig(projectPath, silent, report);
-  warnEsbuildConfigInViteConfig(projectPath, report);
+  migrateEsbuildConfigInViteConfig(projectPath, silent, report);
 }
 
 /**
@@ -512,12 +512,12 @@ export function rewriteMonorepo(
   );
   wrapLazyPluginsInViteConfig(workspaceInfo.rootDir, silent, report);
   migrateTaskCacheConfigInViteConfig(workspaceInfo.rootDir, silent, report);
-  warnEsbuildConfigInViteConfig(workspaceInfo.rootDir, report);
+  migrateEsbuildConfigInViteConfig(workspaceInfo.rootDir, silent, report);
   for (const pkg of workspaceInfo.packages) {
     const projectPath = path.join(workspaceInfo.rootDir, pkg.path);
     wrapLazyPluginsInViteConfig(projectPath, silent, report);
     migrateTaskCacheConfigInViteConfig(projectPath, silent, report);
-    warnEsbuildConfigInViteConfig(projectPath, report);
+    migrateEsbuildConfigInViteConfig(projectPath, silent, report);
   }
 }
 
@@ -645,6 +645,6 @@ export function rewriteMonorepoProject(
   if (!deferLazyPluginWrapping) {
     wrapLazyPluginsInViteConfig(projectPath, silent, report);
     migrateTaskCacheConfigInViteConfig(projectPath, silent, report);
-    warnEsbuildConfigInViteConfig(projectPath, report);
+    migrateEsbuildConfigInViteConfig(projectPath, silent, report);
   }
 }

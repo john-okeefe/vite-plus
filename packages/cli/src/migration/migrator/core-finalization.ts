@@ -12,7 +12,7 @@ import {
   migrateTaskCacheConfigInViteConfig,
   rewriteAllImports,
   rewriteTsconfigTypes,
-  warnEsbuildConfigInViteConfig,
+  migrateEsbuildConfigInViteConfig,
 } from '../migrator.ts';
 import { type MigrationReport } from '../report.ts';
 
@@ -190,7 +190,7 @@ export function finalizeCoreMigrationForExistingVitePlus(
     result.taskCacheConfig =
       migrateTaskCacheConfigInViteConfig(projectPath, silent, report, result.taskCacheWarnings) ||
       result.taskCacheConfig;
-    warnEsbuildConfigInViteConfig(projectPath, report);
+    migrateEsbuildConfigInViteConfig(projectPath, silent, report);
   }
 
   return result;

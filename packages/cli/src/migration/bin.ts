@@ -505,7 +505,8 @@ function showMigrationSummary(options: {
     report.removedConfigCount +
     report.tsdownImportCount +
     report.wrappedPluginConfigCount +
-    report.migratedTaskCacheConfigCount;
+    report.migratedTaskCacheConfigCount +
+    report.esbuildMinifyMigrationCount;
 
   log(
     `${styleText('magenta', '◇')} ${updatedExistingVitePlus ? 'Updated' : 'Migrated'} ${accent(projectLabel)} to Vite+ ${VITE_PLUS_VERSION}`,

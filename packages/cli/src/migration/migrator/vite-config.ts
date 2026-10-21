@@ -887,35 +887,210 @@ export function migrateTaskCacheConfigInViteConfig(
 }
 
 /**
- * Vite 8 no longer bundles esbuild, so esbuild-specific config now fails
- * at build time instead of silently working: `build.minify: 'esbuild'`
- * routes to the deprecated `transformWithEsbuild`, which requires a
- * separate esbuild install, and direct `transformWithEsbuild` usage has
- * no vite-plus equivalent. migrate only rewrites the imports vite-plus
- * owns (config semantics stay user-owned), so surface these as warnings
- * pointing at the oxc replacements.
+ * esbuild-specific config under Vite 8: the bundled esbuild is gone, so
+ * `build.minify: 'esbuild'` routes to a deprecated `transformWithEsbuild`
+ * path that requires a separate esbuild install.
+ *
+ * Static case — `minify: 'esbuild'` inside the `build` object of a
+ * default-exported config — is rewritten in place to `minify: true` (the
+ * oxc minifier) via span replacement, which preserves all comments and
+ * leaves unrelated plugin options untouched. There is no esbuild-specific
+ * behavior to preserve in that shape, and rewriting (rather than removing
+ * the property) keeps minification enabled for SSR builds.
+ *
+ * Everything else — dynamic minify values, `minify` options outside the
+ * build object, and `transformWithEsbuild` usage that may need argument
+ * changes — keeps its code and gets a diagnostic. Vite 8 still supports
+ * esbuild-specific config when esbuild is installed separately, so
+ * retaining it is a valid choice and the diagnostics say so.
  */
-export function warnEsbuildConfigInViteConfig(
+export function migrateEsbuildConfigInViteConfig(
   projectPath: string,
+  silent = false,
   report?: MigrationReport,
-): void {
+): boolean {
   const configs = detectConfigs(projectPath);
   if (!configs.viteConfig) {
-    return;
+    return false;
   }
   const viteConfigPath = path.join(projectPath, configs.viteConfig);
   const source = fs.readFileSync(viteConfigPath, 'utf8');
-  if (/\bminify\s*:\s*(['"])esbuild\1/.test(source)) {
+  const { ast, comments } = JSON.parse(analyzeMigrationSource(viteConfigPath, source)) as {
+    ast: { node: Program };
+    comments: Array<{ start: number; end: number }>;
+  };
+
+  const minifyValueSpans: Array<SpanLike> = [];
+  let hasDynamicMinify = false;
+  let referencesTransformWithEsbuild = false;
+  for (const statement of ast.node.body) {
+    if (statement.type !== 'ExportDefaultDeclaration') {
+      continue;
+    }
+    for (const configObject of staticConfigObjects(statement.declaration)) {
+      const buildProp = configObject.properties?.find((prop) => propertyName(prop) === 'build');
+      if (!buildProp || buildProp.value.type !== 'ObjectExpression') {
+        continue;
+      }
+      // Guarded by the ObjectExpression check above.
+      const buildObject = buildProp.value as OxcObjectNode;
+      const minifyProp = buildObject.properties?.find((prop) => propertyName(prop) === 'minify');
+      if (!minifyProp) {
+        continue;
+      }
+      const { value } = minifyProp;
+      if (value.type === 'Literal' && value.value === 'esbuild') {
+        minifyValueSpans.push({ start: value.start, end: value.end });
+      } else if (value.type !== 'Literal') {
+        // Dynamic (non-literal) values can't be migrated blind.
+        hasDynamicMinify = true;
+      }
+      // Static non-esbuild literals (`true`, `false`, `'terser'`, ...) are
+      // valid user choices and stay untouched.
+    }
+  }
+  for (const node of walkAstNodes(ast.node)) {
+    if (node.type === 'Identifier' && node.name === 'transformWithEsbuild') {
+      referencesTransformWithEsbuild = true;
+    }
+  }
+
+  // Raw occurrences outside comments that the static walk did not account
+  // for (spread configs, helper-built objects, non-default exports) are
+  // surfaced as diagnostics — never rewritten blind.
+  const rawOccurrences = [...source.matchAll(/\bminify\s*:\s*(['"])esbuild\1/g)].filter(
+    (match) =>
+      !comments.some((comment) => match.index >= comment.start && match.index < comment.end),
+  ).length;
+  const hasUnaccountedMinify = rawOccurrences > minifyValueSpans.length;
+
+  if (minifyValueSpans.length > 0) {
+    let content = source;
+    for (const span of minifyValueSpans.toSorted((first, second) => second.start - first.start)) {
+      content = content.slice(0, span.start) + 'true' + content.slice(span.end);
+    }
+    fs.writeFileSync(viteConfigPath, content);
+    if (report) {
+      report.esbuildMinifyMigrationCount += minifyValueSpans.length;
+    }
+    if (!silent) {
+      prompts.log.success(
+        `✔ Switched \`build.minify\` from \`esbuild\` to the oxc minifier (\`minify: true\`) in ${displayRelative(viteConfigPath)}`,
+      );
+    }
+  }
+  if (hasDynamicMinify || hasUnaccountedMinify) {
     warnMigration(
-      `${displayRelative(viteConfigPath)}: \`build.minify: "esbuild"\` no longer works because Vite 8 no longer bundles esbuild. Set \`minify: true\` (oxc minifier) or remove the option.`,
+      `${displayRelative(viteConfigPath)}: \`minify: "esbuild"\` requires installing \`esbuild\` separately under Vite 8. If you rely on esbuild minification, install it and keep the config; otherwise prefer \`minify: true\` (the oxc minifier).`,
       report,
     );
   }
-  if (/\btransformWithEsbuild\b/.test(source)) {
+  if (referencesTransformWithEsbuild) {
     warnMigration(
-      `${displayRelative(viteConfigPath)}: \`transformWithEsbuild\` requires a separate esbuild install under Vite 8. Migrate to \`transformWithOxc\` instead.`,
+      `${displayRelative(viteConfigPath)}: \`transformWithEsbuild\` requires installing \`esbuild\` separately under Vite 8. Migrate to \`transformWithOxc\` if you do not need exact esbuild behavior, or install \`esbuild\` to keep the current behavior.`,
       report,
     );
+  }
+  return minifyValueSpans.length > 0;
+}
+
+interface SpanLike {
+  start: number;
+  end: number;
+}
+
+// Minimal shapes for the serialized oxc AST returned by
+// analyzeMigrationSource. Unknown fields stay behind the index signature;
+// specific members are declared where this module relies on them.
+interface OxcSpan {
+  start: number;
+  end: number;
+}
+
+interface OxcNode extends OxcSpan {
+  type: string;
+  [key: string]: unknown;
+}
+
+interface OxcProperty {
+  key?: OxcNode;
+  value: OxcNode;
+}
+
+interface OxcObjectNode extends OxcNode {
+  properties?: OxcProperty[];
+}
+
+// Key name for object properties: bare identifiers and quoted strings both
+// count (`minify:` and `'minify':` are the same option).
+function propertyName(prop: OxcProperty): string | undefined {
+  const { key } = prop;
+  if (!key) {
+    return undefined;
+  }
+  if (key.type === 'Identifier' && typeof key.name === 'string') {
+    return key.name;
+  }
+  if (key.type === 'Literal' && typeof key.value === 'string') {
+    return key.value;
+  }
+  return undefined;
+}
+
+// Unwrap a default-exported declaration into the config objects it
+// statically exposes: the object itself, defineConfig({...}) and
+// defineConfig([{...}, ...]) arguments, and TS wrappers (as / satisfies).
+function* staticConfigObjects(node: unknown): Generator<OxcObjectNode> {
+  if (Array.isArray(node)) {
+    for (const item of node) {
+      yield* staticConfigObjects(item);
+    }
+    return;
+  }
+  if (!node || typeof node !== 'object') {
+    return;
+  }
+  const n = node as OxcNode;
+  switch (n.type) {
+    case 'ObjectExpression':
+      yield n;
+      return;
+    case 'CallExpression':
+    case 'NewExpression':
+      yield* staticConfigObjects(n.arguments);
+      return;
+    case 'ArrayExpression':
+      yield* staticConfigObjects(n.elements);
+      return;
+    case 'TSAsExpression':
+    case 'TSSatisfiesExpression':
+    case 'TSNonNullExpression':
+    case 'ParenthesizedExpression':
+      yield* staticConfigObjects(n.expression);
+      return;
+    default:
+      return;
+  }
+}
+
+// Every node in the serialized oxc AST, for name-level scans.
+function* walkAstNodes(node: unknown): Generator<OxcNode> {
+  if (Array.isArray(node)) {
+    for (const item of node) {
+      yield* walkAstNodes(item);
+    }
+    return;
+  }
+  if (!node || typeof node !== 'object') {
+    return;
+  }
+  const n = node as OxcNode;
+  yield n;
+  for (const [key, value] of Object.entries(n)) {
+    if (key === 'start' || key === 'end' || key === 'type') {
+      continue;
+    }
+    yield* walkAstNodes(value);
   }
 }
 
