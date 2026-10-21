@@ -887,6 +887,39 @@ export function migrateTaskCacheConfigInViteConfig(
 }
 
 /**
+ * Vite 8 no longer bundles esbuild, so esbuild-specific config now fails
+ * at build time instead of silently working: `build.minify: 'esbuild'`
+ * routes to the deprecated `transformWithEsbuild`, which requires a
+ * separate esbuild install, and direct `transformWithEsbuild` usage has
+ * no vite-plus equivalent. migrate only rewrites the imports vite-plus
+ * owns (config semantics stay user-owned), so surface these as warnings
+ * pointing at the oxc replacements.
+ */
+export function warnEsbuildConfigInViteConfig(
+  projectPath: string,
+  report?: MigrationReport,
+): void {
+  const configs = detectConfigs(projectPath);
+  if (!configs.viteConfig) {
+    return;
+  }
+  const viteConfigPath = path.join(projectPath, configs.viteConfig);
+  const source = fs.readFileSync(viteConfigPath, 'utf8');
+  if (/\bminify\s*:\s*(['"])esbuild\1/.test(source)) {
+    warnMigration(
+      `${displayRelative(viteConfigPath)}: \`build.minify: "esbuild"\` no longer works because Vite 8 no longer bundles esbuild. Set \`minify: true\` (oxc minifier) or remove the option.`,
+      report,
+    );
+  }
+  if (/\btransformWithEsbuild\b/.test(source)) {
+    warnMigration(
+      `${displayRelative(viteConfigPath)}: \`transformWithEsbuild\` requires a separate esbuild install under Vite 8. Migrate to \`transformWithOxc\` instead.`,
+      report,
+    );
+  }
+}
+
+/**
  * Rewrite imports in all TypeScript/JavaScript files under a directory
  * This rewrites vite/vitest imports to @voidzero-dev/vite-plus
  * @param projectPath - The root directory to search for files

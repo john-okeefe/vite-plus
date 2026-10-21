@@ -67,6 +67,7 @@ const {
   pnpmSupportsWorkspaceSettings,
   pnpmOverrideKey,
   setPackageManager,
+  warnEsbuildConfigInViteConfig,
 } = await import('../migrator.js');
 
 // pnpm's managed override keys are range-qualified so they never rewrite an
@@ -9540,5 +9541,102 @@ describe('collectMigrationSetupPlan non-interactive editor conflicts', () => {
 
     expect(plan.editorConflictDecisions.get('externalDependencies.xml')).toBe('skip');
     expect(plan.editorConflictDecisions.get('workspace.xml')).toBe('skip');
+  });
+});
+
+describe('warnEsbuildConfigInViteConfig', () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vp-test-esbuild-config-'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('warns when build.minify is set to "esbuild"', () => {
+    fs.writeFileSync(
+      path.join(tmpDir, 'vite.config.ts'),
+      `import { defineConfig } from 'vite-plus';
+
+export default defineConfig({
+  build: { minify: 'esbuild' },
+});
+`,
+    );
+    const report = createMigrationReport();
+
+    warnEsbuildConfigInViteConfig(tmpDir, report);
+
+    expect(report.warnings).toHaveLength(1);
+    expect(report.warnings[0]).toContain('vite.config.ts');
+    expect(report.warnings[0]).toContain('minify: true');
+  });
+
+  it('warns on direct transformWithEsbuild usage', () => {
+    fs.writeFileSync(
+      path.join(tmpDir, 'vite.config.ts'),
+      `import { transformWithEsbuild } from 'vite';
+
+export default {
+  plugins: [
+    {
+      name: 'esbuild-transform',
+      transform(code, id) {
+        return transformWithEsbuild(code, id);
+      },
+    },
+  ],
+};
+`,
+    );
+    const report = createMigrationReport();
+
+    warnEsbuildConfigInViteConfig(tmpDir, report);
+
+    expect(report.warnings).toHaveLength(1);
+    expect(report.warnings[0]).toContain('transformWithOxc');
+  });
+
+  it('warns separately when both esbuild patterns are present', () => {
+    fs.writeFileSync(
+      path.join(tmpDir, 'vite.config.ts'),
+      `import { transformWithEsbuild } from 'vite';
+
+export default {
+  build: { minify: 'esbuild' },
+};
+`,
+    );
+    const report = createMigrationReport();
+
+    warnEsbuildConfigInViteConfig(tmpDir, report);
+
+    expect(report.warnings).toHaveLength(2);
+  });
+
+  it('does not warn for oxc-compatible configs', () => {
+    fs.writeFileSync(
+      path.join(tmpDir, 'vite.config.ts'),
+      `import { defineConfig } from 'vite-plus';
+
+export default defineConfig({
+  build: { minify: true },
+});
+`,
+    );
+    const report = createMigrationReport();
+
+    warnEsbuildConfigInViteConfig(tmpDir, report);
+
+    expect(report.warnings).toHaveLength(0);
+  });
+
+  it('does nothing when no vite config exists', () => {
+    const report = createMigrationReport();
+
+    expect(() => warnEsbuildConfigInViteConfig(tmpDir, report)).not.toThrow();
+    expect(report.warnings).toHaveLength(0);
   });
 });
