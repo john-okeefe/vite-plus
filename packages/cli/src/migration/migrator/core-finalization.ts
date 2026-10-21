@@ -87,6 +87,7 @@ export type CoreMigrationFinalizationResult = {
   imports: boolean;
   tsdownConfig: boolean;
   taskCacheConfig: boolean;
+  esbuildMinifyConfig: boolean;
   // Kept out of the report so that review items alone do not make an
   // up-to-date project run the rest of the migration.
   taskCacheWarnings: string[];
@@ -157,6 +158,7 @@ export function finalizeCoreMigrationForExistingVitePlus(
     imports: false,
     tsdownConfig: false,
     taskCacheConfig: false,
+    esbuildMinifyConfig: false,
     taskCacheWarnings: [],
   };
 
@@ -190,7 +192,8 @@ export function finalizeCoreMigrationForExistingVitePlus(
     result.taskCacheConfig =
       migrateTaskCacheConfigInViteConfig(projectPath, silent, report, result.taskCacheWarnings) ||
       result.taskCacheConfig;
-    migrateEsbuildConfigInViteConfig(projectPath, silent, report);
+    result.esbuildMinifyConfig =
+      migrateEsbuildConfigInViteConfig(projectPath, silent, report) || result.esbuildMinifyConfig;
   }
 
   return result;

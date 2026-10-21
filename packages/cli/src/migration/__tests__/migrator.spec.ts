@@ -8665,6 +8665,7 @@ describe('existing Vite+ core migration finalization', () => {
       imports: true,
       tsdownConfig: false,
       taskCacheConfig: false,
+      esbuildMinifyConfig: false,
       taskCacheWarnings: [],
     });
 
@@ -8744,6 +8745,7 @@ export default defineConfig({
       imports: true,
       tsdownConfig: true,
       taskCacheConfig: false,
+      esbuildMinifyConfig: false,
       taskCacheWarnings: [],
     });
     expect(fs.readFileSync(path.join(tmpDir, 'vite.config.ts'), 'utf8')).toContain(
@@ -8763,6 +8765,7 @@ export default defineConfig({
       imports: false,
       tsdownConfig: false,
       taskCacheConfig: false,
+      esbuildMinifyConfig: false,
       taskCacheWarnings: [],
     });
   });
@@ -8802,6 +8805,7 @@ export default defineConfig({ entry: 'src/index.ts' });
       imports: true,
       tsdownConfig: false,
       taskCacheConfig: false,
+      esbuildMinifyConfig: false,
       taskCacheWarnings: [],
     });
     expect(fs.readFileSync(path.join(tmpDir, 'vite.config.ts'), 'utf8')).toBe(originalViteConfig);
@@ -8866,6 +8870,7 @@ export default defineConfig({
 
     expect(finalizeCoreMigrationForExistingVitePlus(workspaceInfo, true, report)).toMatchObject({
       taskCacheConfig: false,
+      esbuildMinifyConfig: false,
       taskCacheWarnings: [],
     });
     expect(report.migratedTaskCacheConfigCount).toBe(2);
