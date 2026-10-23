@@ -1183,7 +1183,8 @@ async function main() {
       coreMigrationResult.tsconfigTypes ||
       coreMigrationResult.imports ||
       coreMigrationResult.tsdownConfig ||
-      coreMigrationResult.taskCacheConfig
+      coreMigrationResult.taskCacheConfig ||
+      coreMigrationResult.esbuildMinifyConfig
     ) {
       didMigrate = true;
     }

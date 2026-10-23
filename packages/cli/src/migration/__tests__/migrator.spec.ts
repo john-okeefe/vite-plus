@@ -8912,6 +8912,54 @@ export default defineConfig({
     );
     expect(result.taskCacheWarnings[0]).toContain('/config/run#cache');
   });
+
+  it('reports the esbuild minify switch as a migration on an otherwise up-to-date project', () => {
+    // The rewrite is the project's ONLY pending change and the static case
+    // emits no warnings. `didMigrate` must therefore see this flag, or the
+    // "already using Vite+" fast exit would swallow the vite.config rewrite
+    // (no summary, no formatting pass).
+    fs.writeFileSync(
+      path.join(tmpDir, 'package.json'),
+      JSON.stringify({ name: 'test', devDependencies: { 'vite-plus': 'latest' } }, null, 2),
+    );
+    fs.writeFileSync(
+      path.join(tmpDir, 'vite.config.ts'),
+      `import { defineConfig } from 'vite-plus';
+
+export default defineConfig({
+  build: {
+    minify: 'esbuild',
+    sourcemap: true,
+  },
+});
+`,
+    );
+    const workspaceInfo = makeWorkspaceInfo(tmpDir, PackageManager.pnpm);
+
+    expect(finalizeCoreMigrationForExistingVitePlus(workspaceInfo, true)).toEqual({
+      dependencies: false,
+      scripts: false,
+      tsconfigTypes: false,
+      imports: false,
+      tsdownConfig: false,
+      taskCacheConfig: false,
+      esbuildMinifyConfig: true,
+      taskCacheWarnings: [],
+    });
+    expect(fs.readFileSync(path.join(tmpDir, 'vite.config.ts'), 'utf8')).toContain('minify: true');
+
+    // Converged: a second run finds nothing left to migrate.
+    expect(finalizeCoreMigrationForExistingVitePlus(workspaceInfo, true)).toEqual({
+      dependencies: false,
+      scripts: false,
+      tsconfigTypes: false,
+      imports: false,
+      tsdownConfig: false,
+      taskCacheConfig: false,
+      esbuildMinifyConfig: false,
+      taskCacheWarnings: [],
+    });
+  });
 });
 
 describe('rewriteStandaloneProject — task cache settings', () => {
