@@ -902,6 +902,7 @@ interface OxcNode extends OxcSpan {
 interface OxcProperty {
   key?: OxcNode;
   value: OxcNode;
+  computed?: boolean;
 }
 
 interface OxcObjectNode extends OxcNode {
@@ -909,13 +910,16 @@ interface OxcObjectNode extends OxcNode {
 }
 
 // Key name for object properties: bare identifiers and quoted strings both
-// count (`minify:` and `'minify':` are the same option).
+// count (`minify:` and `'minify':` are the same option), and so do computed
+// string literals (`['minify']`). Computed identifiers must not: a bound
+// name that happens to equal an option name (`const build = 'plugin'` +
+// `[build]: {...}`) is not that option.
 function propertyName(prop: OxcProperty): string | undefined {
   const { key } = prop;
   if (!key) {
     return undefined;
   }
-  if (key.type === 'Identifier' && typeof key.name === 'string') {
+  if (key.type === 'Identifier' && typeof key.name === 'string' && !prop.computed) {
     return key.name;
   }
   if (key.type === 'Literal' && typeof key.value === 'string') {
@@ -926,7 +930,9 @@ function propertyName(prop: OxcProperty): string | undefined {
 
 // Unwrap a default-exported declaration into the config objects it
 // statically exposes: the object itself, defineConfig({...}) and
-// defineConfig([{...}, ...]) arguments, and TS wrappers (as / satisfies).
+// defineConfig([{...}, ...]) arguments, TS wrappers (as / satisfies), and
+// the objects that config factories (`defineConfig(() => ({...}))` and
+// function equivalents) build in their direct returns.
 function* staticConfigObjects(node: unknown): Generator<OxcObjectNode> {
   if (Array.isArray(node)) {
     for (const item of node) {
@@ -955,8 +961,34 @@ function* staticConfigObjects(node: unknown): Generator<OxcObjectNode> {
     case 'ParenthesizedExpression':
       yield* staticConfigObjects(n.expression);
       return;
+    case 'ArrowFunctionExpression':
+    case 'FunctionExpression':
+    case 'FunctionDeclaration':
+      yield* functionConfigObjects(n);
+      return;
     default:
       return;
+  }
+}
+
+// Config objects a function exposes: an expression body IS the return
+// value; a block body contributes only its DIRECT return statements.
+// Returns nested in conditionals stay with the raw-occurrence fallback
+// diagnostics instead of being rewritten blind.
+function* functionConfigObjects(fn: OxcNode): Generator<OxcObjectNode> {
+  const body = fn.body as OxcNode | undefined;
+  if (!body) {
+    return;
+  }
+  if (body.type !== 'BlockStatement') {
+    yield* staticConfigObjects(body);
+    return;
+  }
+  for (const statement of (body.body as unknown[] | undefined) ?? []) {
+    const node = statement as OxcNode;
+    if (node.type === 'ReturnStatement' && node.argument) {
+      yield* staticConfigObjects(node.argument);
+    }
   }
 }
 
@@ -984,11 +1016,14 @@ function* walkAstNodes(node: unknown): Generator<OxcNode> {
 /**
  * esbuild-specific config fails under Vite 8 unless esbuild is installed
  * separately. The static case — `build.minify: 'esbuild'` in a
- * default-exported config — is rewritten in place to `minify: true` (the
+ * default-exported config, including objects directly returned from a
+ * `defineConfig` callback — is rewritten in place to `minify: true` (the
  * oxc minifier); span replacement keeps comments and unrelated options
- * intact, and the switch is reported. Dynamic values, `minify` outside
- * `build`, and `transformWithEsbuild` usage keep their code and get a
- * diagnostic covering both the keep-esbuild and migrate-to-oxc paths.
+ * intact, and the switch is reported. Dynamic values (e.g. a ternary
+ * picking `'esbuild'` per mode), `minify` outside `build`, computed
+ * identifier keys, and `transformWithEsbuild` usage keep their code and
+ * get a diagnostic covering both the keep-esbuild and migrate-to-oxc
+ * paths.
  */
 export function migrateEsbuildConfigInViteConfig(
   projectPath: string,
